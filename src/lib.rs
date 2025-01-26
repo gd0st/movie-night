@@ -1,8 +1,4 @@
-use serde::{Deserialize, Serialize};
-use serde_json;
-
 pub mod polling {
-    use std::collections::HashMap;
 
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -27,19 +23,13 @@ pub mod polling {
     }
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
-    pub enum PollSubmission {
-        Single(String),
-        Multiple(Vec<String>),
-    }
-
-    #[derive(Serialize, Deserialize, Clone, Debug)]
     #[serde(tag = "type")]
-    pub enum NewPollSubmission {
+    pub enum PollSubmission {
         Radio { uuid: String, choices: String },
         Checkbox { uuid: String, choices: Vec<String> },
     }
 
-    impl NewPollSubmission {
+    impl PollSubmission {
         pub fn uuid(&self) -> &String {
             match self {
                 Self::Checkbox { uuid, choices } => uuid,
@@ -50,11 +40,11 @@ pub mod polling {
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
     pub struct ExampleForm {
-        submissions: Vec<NewPollSubmission>,
+        submissions: Vec<PollSubmission>,
     }
 
     impl ExampleForm {
-        pub fn into_vec(self) -> Vec<NewPollSubmission> {
+        pub fn into_vec(self) -> Vec<PollSubmission> {
             self.submissions
         }
     }
@@ -75,40 +65,21 @@ pub mod polling {
 
     impl Poll {
         // need a function that finds the leader, and can report if there is a tie.
-        pub fn add_submission(&mut self, submission: PollSubmission) -> Result<()> {
-            match (self.multiple, submission) {
-                (false, PollSubmission::Single(item)) => {
-                    self.options
-                        .iter_mut()
-                        .filter(|option| option.name == item)
-                        .for_each(|option| option.inc_vote());
-                    Ok(())
-                }
-                (true, PollSubmission::Multiple(items)) => {
-                    self.options
-                        .iter_mut()
-                        .filter(|option| items.contains(&option.name))
-                        .for_each(|option| option.inc_vote());
-                    Ok(())
-                }
-                _ => Err(PollError::InvalidSubmission),
-            }
-        }
 
         pub fn uuid(&self) -> String {
             self.uuid.to_string()
         }
 
-        pub fn process_submission(&mut self, submission: &NewPollSubmission) {
+        pub fn process_submission(&mut self, submission: &PollSubmission) {
             match (submission, self.multiple) {
-                (NewPollSubmission::Radio { uuid, choices }, false) => {
+                (PollSubmission::Radio { uuid, choices }, false) => {
                     self.options
                         .iter_mut()
                         .filter(|option| option.name.eq(choices))
                         .for_each(|option| option.inc_vote());
                 }
 
-                (NewPollSubmission::Checkbox { uuid, choices }, true) => {
+                (PollSubmission::Checkbox { uuid, choices }, true) => {
                     self.options
                         .iter_mut()
                         .filter(|option| choices.contains(&option.name))
@@ -145,7 +116,7 @@ pub mod polling {
     }
 
     impl PollCollection {
-        pub fn send_submission(&mut self, submission: NewPollSubmission) {
+        pub fn send_submission(&mut self, submission: PollSubmission) {
             self.polls
                 .iter_mut()
                 .filter(|poll| poll.uuid().eq(submission.uuid()))
@@ -164,11 +135,9 @@ pub mod polling {
 pub mod app {
 
     // TODO nest routes into app and make it a config for actix-web.
-    use std::{fs::OpenOptions, path::PathBuf};
-
+    use crate::polling::{Poll, PollCollection};
     use serde::{Deserialize, Serialize};
-
-    use crate::polling::{Poll, PollCollection, PollSubmission};
+    use std::{fs::OpenOptions, path::PathBuf};
 
     #[derive(Serialize, Deserialize)]
     pub struct Config {
@@ -208,44 +177,13 @@ pub mod app {
             collection
         }
     }
-    #[derive(Serialize, Deserialize, Clone, Debug)]
-    pub struct FormSubmission {
-        dates: Vec<String>,
-        movie: Option<String>,
-    }
-
-    impl Into<Vec<PollSubmission>> for FormSubmission {
-        fn into(self) -> Vec<PollSubmission> {
-            let submission = PollSubmission::Multiple(self.dates);
-            let mut subs = vec![submission];
-
-            if let Some(movie) = self.movie {
-                subs.push(PollSubmission::Single(movie));
-            }
-            subs
-        }
-    }
-    pub mod testing {
-        use super::Config;
-        pub fn example_config() -> Config {
-            Config {
-                dates: vec!["Feb 15th, 2025".to_string(), "Feb 28th, 2025".to_string()],
-                movies: None,
-            }
-        }
-    }
 }
 
 pub mod routes {
 
-    use std::{fs::OpenOptions, sync::Mutex};
+    use std::sync::Mutex;
 
-    use crate::{
-        app::FormSubmission,
-        polling::{ExampleForm, PollCollection},
-    };
-
-    use super::polling::{Poll, PollSubmission};
+    use crate::polling::{ExampleForm, PollCollection};
     use actix_web::{
         get, post,
         web::{Data, Json},
@@ -262,47 +200,11 @@ pub mod routes {
         form: Json<ExampleForm>,
         polls: Data<Mutex<PollCollection>>,
     ) -> HttpResponse {
-        println!("{:?}", &form);
         if let Ok(mut polls) = polls.lock() {
             form.0.into_vec().into_iter().for_each(|submission| {
                 polls.send_submission(submission);
             });
         }
-        HttpResponse::Ok().finish()
-    }
-
-    #[post("/submit")]
-    async fn form_submit(
-        form: Json<FormSubmission>,
-        polls: Data<Mutex<PollCollection>>,
-    ) -> HttpResponse {
-        let submissions: Vec<PollSubmission> = form.0.into();
-        println!("received a submission -> {:?}", submissions);
-
-        // Mappings here are dummy stupid now.
-        // Data expected on the return should be closer tied
-        // to what is actually being returned.
-
-        // The front-end is so far responsive enough to just take anything.
-
-        if let Ok(mut polls) = polls.lock() {
-            let res = polls
-                .get_mut("Dates")
-                .unwrap()
-                .add_submission(submissions[0].clone());
-            if !res.is_ok() {
-                println!("error on submission. Could be in an invalid format?")
-            }
-
-            let res = polls
-                .get_mut("Movies")
-                .unwrap()
-                .add_submission(submissions[1].clone());
-            if !res.is_ok() {
-                println!("error on submission. Could be in an invalid format?")
-            }
-        }
-
         HttpResponse::Ok().finish()
     }
 

@@ -1,24 +1,9 @@
 use clap::{self, Parser};
-use std::{
-    fs::OpenOptions,
-    net::{IpAddr, Ipv4Addr, SocketAddrV4},
-    os::unix::net::SocketAddr,
-    path::PathBuf,
-    rc::Rc,
-    sync::Mutex,
-};
+use std::{path::PathBuf, sync::Mutex};
 
 use actix_cors;
-use actix_web::{
-    self,
-    web::{route, Data},
-    App, HttpServer,
-};
-use movie_night_api::{
-    app,
-    polling::{self, Poll},
-    routes,
-};
+use actix_web::{self, web::Data, App, HttpServer};
+use movie_night_api::{app, routes};
 
 #[derive(clap::Parser, Debug)]
 struct Arg {
@@ -46,7 +31,6 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .service(routes::get_poll)
             .service(routes::health_check)
-            .service(routes::form_submit)
             .service(routes::submit_new_form)
             // I need to tweak cors later probably.
             .wrap(actix_cors::Cors::permissive())
