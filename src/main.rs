@@ -1,5 +1,9 @@
 use clap::{self, Parser};
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    path::PathBuf,
+    sync::Mutex,
+};
 
 use actix_cors;
 use actix_web::{self, web::Data, App, HttpServer};
@@ -7,8 +11,8 @@ use movie_night_api::{app, routes};
 
 #[derive(clap::Parser, Debug)]
 struct Arg {
-    #[arg(short, long)]
-    port: Option<u16>,
+    #[arg(long, short)]
+    socket: Option<SocketAddrV4>,
     #[arg(short, long)]
     config: PathBuf,
 }
@@ -16,10 +20,10 @@ struct Arg {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let args = Arg::parse();
-    let ip = "127.0.0.1";
-    let port = args.port.unwrap_or(5789);
 
-    // TODO needs Args for ip, port & config parameter passing.
+    let socket = args
+        .socket
+        .unwrap_or(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 5789));
 
     let Ok(config) = app::Config::try_from(args.config) else {
         eprintln!("error while parsing config");
@@ -36,7 +40,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(actix_cors::Cors::permissive())
             .app_data(polls.clone())
     })
-    .bind((ip, port))?;
+    .bind(socket)?;
 
     server
         .addrs()
